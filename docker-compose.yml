@@ -1,0 +1,64 @@
+version: "3.9"
+services:
+  db:
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200m"
+    command: start-single-node --insecure --store=attrs=ssd,path=/var/lib/cockroach/
+    volumes:
+      - ./docker/db/data:/var/lib/cockroach
+    image: ${IMAGE_DB}
+  nakama:
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200m"
+    entrypoint:
+      - "/bin/sh"
+      - "-ecx"
+      - >
+        /nakama/nakama migrate up --database.address root@db:26257 &&
+        exec /nakama/nakama --name nakama1 --database.address root@db:26257 --logger.level DEBUG --session.token_expiry_sec 7200 --metrics.prometheus_port 9100 --console.password ${NAKAMA_CONSOLE_PASSWORD}
+    volumes:
+      - ./docker/nakama/data:/nakama/data
+    ports:
+      - 7349:7349
+      - 7350:7350
+      - 7351:7351
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7350/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      - db
+      - prometheus
+    image: ${IMAGE_NAKAMA}
+  prometheus:
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200m"
+    entrypoint: /bin/sh -c
+    command: |
+      'sh -s <<EOF
+        cat > ./prometheus.yml <<EON
+      global:
+        scrape_interval:     15s
+        evaluation_interval: 15s
+      scrape_configs:
+        - job_name: prometheus
+          static_configs:
+          - targets: ["localhost:9090"]
+        - job_name: nakama
+          metrics_path: /
+          static_configs:
+          - targets: ["nakama:9100"]
+      EON
+      prometheus --config.file=./prometheus.yml
+      EOF'
+    image: ${IMAGE_PROMETHEUS}
